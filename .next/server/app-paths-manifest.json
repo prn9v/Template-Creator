@@ -1,0 +1,7 @@
+{
+  "/page": "app/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/api/templates/[id]/route": "app/api/templates/[id]/route.js",
+  "/api/templates/route": "app/api/templates/route.js",
+  "/customize/[id]/page": "app/customize/[id]/page.js"
+}

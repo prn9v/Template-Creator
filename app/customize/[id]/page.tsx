@@ -362,8 +362,24 @@ export default function CustomizePage() {
             const fontSize = placeholder.fontSize || 12;
             const color = hexToRgb(placeholder.color || '#000000');
             
+            // Get actual PDF page dimensions
+            const actualPageSize = page.getSize();
+            const actualPageWidth = actualPageSize.width;
+            const actualPageHeight = actualPageSize.height;
+            
+            console.log(`[CLIENT DEBUG] Text Placeholder ${placeholder.id}:`);
+            console.log(`  Template dimensions: ${template.width}x${template.height}`);
+            console.log(`  Actual PDF dimensions: ${actualPageWidth}x${actualPageHeight}`);
+            console.log(`  Original position: x=${placeholder.x}, y=${placeholder.y}`);
+            console.log(`  Original size: w=${placeholder.width}, h=${placeholder.height}`);
+            
+            // Coordinates are already in PDF coordinate space from admin interface
+            // Just need to convert from top-left to bottom-left coordinate system
             const x = placeholder.x;
-            const y = pageHeight - placeholder.y - (placeholder.height || fontSize);
+            const y = actualPageHeight - placeholder.y - placeholder.height;
+            
+            console.log(`  Calculated position: x=${x}, y=${y}`);
+            console.log(`  Font size: ${fontSize}`);
             
             page.drawText(userValue.toString(), {
               x,
@@ -387,8 +403,24 @@ export default function CustomizePage() {
                 continue;
               }
               
+              // Get actual PDF page dimensions
+              const actualPageSize = page.getSize();
+              const actualPageWidth = actualPageSize.width;
+              const actualPageHeight = actualPageSize.height;
+              
+              console.log(`[CLIENT DEBUG] Image Placeholder ${placeholder.id}:`);
+              console.log(`  Template dimensions: ${template.width}x${template.height}`);
+              console.log(`  Actual PDF dimensions: ${actualPageWidth}x${actualPageHeight}`);
+              console.log(`  Original position: x=${placeholder.x}, y=${placeholder.y}`);
+              console.log(`  Original size: w=${placeholder.width}, h=${placeholder.height}`);
+              
+              // Coordinates are already in PDF coordinate space from admin interface
+              // Just need to convert from top-left to bottom-left coordinate system
               const x = placeholder.x;
-              const y = pageHeight - placeholder.y - placeholder.height;
+              const y = actualPageHeight - placeholder.y - placeholder.height;
+              
+              console.log(`  Calculated position: x=${x}, y=${y}`);
+              console.log(`  Using original size: w=${placeholder.width}, h=${placeholder.height}`);
               
               page.drawImage(image, {
                 x,

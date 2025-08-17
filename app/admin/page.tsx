@@ -129,13 +129,17 @@ export default function AdminPage() {
       const pdf = await pdfLib.PDFDocument.load(arrayBuffer);
       const pageCount = pdf.getPageCount();
       
+      // Get actual PDF page dimensions from the first page
+      const firstPage = pdf.getPage(0);
+      const { width: pdfWidth, height: pdfHeight } = firstPage.getSize();
+      
       setPdfDoc(pdf);
       setTemplate(prev => ({
         ...prev,
         isPdf: true,
         totalPages: pageCount,
-        width: 800, // Default width for PDF display
-        height: 600 // Default height for PDF display
+        width: pdfWidth, // Use actual PDF width
+        height: pdfHeight // Use actual PDF height
       }));
 
       // Generate images for all pages

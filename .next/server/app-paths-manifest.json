@@ -1,7 +1,9 @@
 {
-  "/page": "app/page.js",
-  "/admin/page": "app/admin/page.js",
-  "/customize/[id]/page": "app/customize/[id]/page.js",
+  "/_not-found": "app/_not-found.js",
   "/api/templates/[id]/route": "app/api/templates/[id]/route.js",
-  "/api/templates/route": "app/api/templates/route.js"
+  "/api/templates/route": "app/api/templates/route.js",
+  "/page": "app/page.js",
+  "/customize/[id]/page": "app/customize/[id]/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/preview/[id]/page": "app/preview/[id]/page.js"
 }

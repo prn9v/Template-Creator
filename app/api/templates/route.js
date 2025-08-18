@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
 import path from 'path';
 import dbConnect from '@/lib/mongodb';
 import Template from '@/lib/models/Template';
+import { uploadToCloudinary } from '@/lib/cloudinary';
 
 export async function GET() {
   try {
@@ -37,21 +36,17 @@ export async function POST(request) {
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
       
-      // Create uploads directory if it doesn't exist
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-      if (!existsSync(uploadsDir)) {
-        await mkdir(uploadsDir, { recursive: true });
-      }
-      
       // Generate unique filename
       const timestamp = Date.now();
       const fileExtension = path.extname(file.name);
       const filename = `template-${timestamp}${fileExtension}`;
-      const filepath = path.join(uploadsDir, filename);
       
-      // Save file
-      await writeFile(filepath, buffer);
-      backgroundImagePath = `/uploads/${filename}`;
+      // Determine resource type for Cloudinary
+      const resourceType = isPdf ? 'raw' : 'image';
+      
+      // Upload to Cloudinary
+      const uploadResult = await uploadToCloudinary(buffer, filename, resourceType);
+      backgroundImagePath = uploadResult.secure_url;
     }
     
     const newTemplate = new Template({

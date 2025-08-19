@@ -10,7 +10,7 @@ import jsPDF from 'jspdf';
 
 interface Placeholder {
   id: string;
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'textarea';
   x: number;
   y: number;
   width: number;
@@ -21,6 +21,10 @@ interface Placeholder {
   placeholder?: string;
   required: boolean;
   pageIndex?: number;
+  lineHeight?: number;
+  maxLines?: number;
+  isGlobal?: boolean;
+  pageOverrides?: { [key: number]: { x: number; y: number; width: number; height: number } };
 }
 
 interface Template {
@@ -343,13 +347,46 @@ export default function CustomizePage() {
 
       const newPages = newPdf.getPages();
       
+      // Pre-embed all images to avoid re-embedding for global placeholders
+      const embeddedImages: { [key: string]: any } = {};
+      for (const placeholder of template.placeholders) {
+        if (placeholder.type === 'image' && userData[placeholder.id] instanceof File) {
+          const userValue = userData[placeholder.id] as File;
+          try {
+            const imageBytes = await userValue.arrayBuffer();
+            let image;
+            
+            if (userValue.type === 'image/png') {
+              image = await newPdf.embedPng(imageBytes);
+            } else if (userValue.type === 'image/jpeg' || userValue.type === 'image/jpg') {
+              image = await newPdf.embedJpg(imageBytes);
+            } else {
+              console.warn(`Unsupported image type: ${userValue.type}`);
+              continue;
+            }
+            
+            embeddedImages[placeholder.id] = image;
+          } catch (imageError) {
+            console.error('Error embedding image:', imageError);
+          }
+        }
+      }
+      
       for (let pageIndex = 0; pageIndex < newPages.length; pageIndex++) {
         const page = newPages[pageIndex];
-        const { height: pageHeight } = page.getSize();
         
-        const pagePlaceholders = template.placeholders.filter(p => p.pageIndex === pageIndex);
+        // Get placeholders for this page (including global placeholders)
+        const pagePlaceholders = template.placeholders.filter(p => 
+          p.pageIndex === pageIndex || p.isGlobal
+        );
         
         for (const placeholder of pagePlaceholders) {
+          // Use page override position if available for global placeholders
+          let actualPlaceholder = { ...placeholder };
+          if (placeholder.isGlobal && placeholder.pageOverrides && placeholder.pageOverrides[pageIndex]) {
+            const override = placeholder.pageOverrides[pageIndex];
+            actualPlaceholder = { ...placeholder, ...override };
+          }
           const userValue = userData[placeholder.id];
           if (!userValue && placeholder.required) {
             alert(`Required field "${placeholder.placeholder}" is missing on page ${pageIndex + 1}`);
@@ -358,80 +395,106 @@ export default function CustomizePage() {
           
           if (!userValue) continue;
           
-          if (placeholder.type === 'text') {
+          if (placeholder.type === 'text' || placeholder.type === 'textarea') {
             const font = fontMap[placeholder.fontFamily || 'Arial'] || helvetica;
             const fontSize = placeholder.fontSize || 12;
             const color = hexToRgb(placeholder.color || '#000000');
             
             // Get actual PDF page dimensions
             const actualPageSize = page.getSize();
-            const actualPageWidth = actualPageSize.width;
             const actualPageHeight = actualPageSize.height;
-            
-            console.log(`[CLIENT DEBUG] Text Placeholder ${placeholder.id}:`);
-            console.log(`  Template dimensions: ${template.width}x${template.height}`);
-            console.log(`  Actual PDF dimensions: ${actualPageWidth}x${actualPageHeight}`);
-            console.log(`  Original position: x=${placeholder.x}, y=${placeholder.y}`);
-            console.log(`  Original size: w=${placeholder.width}, h=${placeholder.height}`);
             
             // Coordinates are already in PDF coordinate space from admin interface
             // Just need to convert from top-left to bottom-left coordinate system
-            const x = placeholder.x;
-            const y = actualPageHeight - placeholder.y - placeholder.height;
+            const x = actualPlaceholder.x;
+            let y = actualPageHeight - actualPlaceholder.y - actualPlaceholder.height;
             
-            console.log(`  Calculated position: x=${x}, y=${y}`);
-            console.log(`  Font size: ${fontSize}`);
-            
-            page.drawText(userValue.toString(), {
-              x,
-              y,
-              size: fontSize,
-              font,
-              color: pdfLib.rgb(color.r / 255, color.g / 255, color.b / 255),
-              maxWidth: placeholder.width,
-            });
-          } else if (placeholder.type === 'image' && userValue instanceof File) {
-            try {
-              const imageBytes = await userValue.arrayBuffer();
-              let image;
+            if (placeholder.type === 'textarea') {
+              // Handle textarea with line breaks
+              const lines = userValue.toString().split('\n');
+              const lineHeight = (placeholder.lineHeight || 1.2) * fontSize;
+              const maxLines = placeholder.maxLines || 5;
               
-              if (userValue.type === 'image/png') {
-                image = await newPdf.embedPng(imageBytes);
-              } else if (userValue.type === 'image/jpeg' || userValue.type === 'image/jpg') {
-                image = await newPdf.embedJpg(imageBytes);
-              } else {
-                console.warn(`Unsupported image type: ${userValue.type}`);
-                continue;
+              // Start from the bottom of the textarea area and work up
+              let currentY = y + placeholder.height - lineHeight;
+              
+              for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+                if (lines[i].trim()) {
+                  // Center align each line in textarea with padding
+                  const padding = 8; // Add 8px padding
+                  const availableWidth = actualPlaceholder.width - (padding * 2);
+                  const lineWidth = font.widthOfTextAtSize(lines[i], fontSize);
+                  const centeredX = x + padding + (availableWidth - Math.min(lineWidth, availableWidth)) / 2;
+                  
+                  page.drawText(lines[i], {
+                    x: centeredX,
+                    y: currentY,
+                    size: fontSize,
+                    font,
+                    color: pdfLib.rgb(color.r / 255, color.g / 255, color.b / 255),
+                    maxWidth: availableWidth,
+                  });
+                }
+                currentY -= lineHeight;
               }
+            } else {
+              // Single line text - center aligned with padding
+              const padding = 8; // Add 8px padding
+              const availableWidth = actualPlaceholder.width - (padding * 2);
+              const textWidth = font.widthOfTextAtSize(userValue.toString(), fontSize);
+              const centeredX = x + padding + (availableWidth - Math.min(textWidth, availableWidth)) / 2;
               
-              // Get actual PDF page dimensions
-              const actualPageSize = page.getSize();
-              const actualPageWidth = actualPageSize.width;
-              const actualPageHeight = actualPageSize.height;
-              
-              console.log(`[CLIENT DEBUG] Image Placeholder ${placeholder.id}:`);
-              console.log(`  Template dimensions: ${template.width}x${template.height}`);
-              console.log(`  Actual PDF dimensions: ${actualPageWidth}x${actualPageHeight}`);
-              console.log(`  Original position: x=${placeholder.x}, y=${placeholder.y}`);
-              console.log(`  Original size: w=${placeholder.width}, h=${placeholder.height}`);
-              
-              // Coordinates are already in PDF coordinate space from admin interface
-              // Just need to convert from top-left to bottom-left coordinate system
-              const x = placeholder.x;
-              const y = actualPageHeight - placeholder.y - placeholder.height;
-              
-              console.log(`  Calculated position: x=${x}, y=${y}`);
-              console.log(`  Using original size: w=${placeholder.width}, h=${placeholder.height}`);
-              
-              page.drawImage(image, {
-                x,
-                y,
-                width: placeholder.width,
-                height: placeholder.height,
+              page.drawText(userValue.toString(), {
+                x: centeredX,
+                y: y + padding / 2, // Add vertical padding
+                size: fontSize,
+                font,
+                color: pdfLib.rgb(color.r / 255, color.g / 255, color.b / 255),
+                maxWidth: availableWidth,
               });
-            } catch (imageError) {
-              console.error('Error processing image:', imageError);
             }
+          } else if (placeholder.type === 'image' && embeddedImages[placeholder.id]) {
+            // Use pre-embedded image
+            const image = embeddedImages[placeholder.id];
+            
+            // Get actual PDF page dimensions
+            const actualPageSize = page.getSize();
+            const actualPageWidth = actualPageSize.width;
+            const actualPageHeight = actualPageSize.height;
+            
+            // Coordinates are already in PDF coordinate space from admin interface
+            // Just need to convert from top-left to bottom-left coordinate system
+            const x = actualPlaceholder.x;
+            const y = actualPageHeight - actualPlaceholder.y - actualPlaceholder.height;
+            
+            
+            // Calculate image dimensions to fit properly (object-contain behavior)
+            const imageDims = image.scale(1);
+            const imageAspectRatio = imageDims.width / imageDims.height;
+            const placeholderAspectRatio = actualPlaceholder.width / actualPlaceholder.height;
+            
+            let drawWidth = actualPlaceholder.width;
+            let drawHeight = actualPlaceholder.height;
+            let drawX = x;
+            let drawY = y;
+            
+            // Fit image maintaining aspect ratio (object-contain)
+            if (imageAspectRatio > placeholderAspectRatio) {
+              // Image is wider - fit to width
+              drawHeight = actualPlaceholder.width / imageAspectRatio;
+              drawY = y + (actualPlaceholder.height - drawHeight) / 2;
+            } else {
+              // Image is taller - fit to height
+              drawWidth = actualPlaceholder.height * imageAspectRatio;
+              drawX = x + (actualPlaceholder.width - drawWidth) / 2;
+            }
+            
+            page.drawImage(image, {
+              x: drawX,
+              y: drawY,
+              width: drawWidth,
+              height: drawHeight,
+            });
           }
         }
       }
@@ -533,7 +596,18 @@ export default function CustomizePage() {
   const getCurrentPagePlaceholders = () => {
     if (!template) return [];
     if (!template.isPdf) return template.placeholders;
-    return template.placeholders.filter(p => p.pageIndex === currentPage);
+    return template.placeholders.filter(p => p.pageIndex === currentPage || p.isGlobal);
+  };
+
+  const getGlobalPlaceholders = () => {
+    if (!template) return [];
+    return template.placeholders.filter(p => p.isGlobal);
+  };
+
+  const getPageSpecificPlaceholders = () => {
+    if (!template) return [];
+    if (!template.isPdf) return template.placeholders.filter(p => !p.isGlobal);
+    return template.placeholders.filter(p => p.pageIndex === currentPage && !p.isGlobal);
   };
 
   const getCurrentBackgroundImage = () => {
@@ -656,11 +730,62 @@ export default function CustomizePage() {
               )}
 
               <div className="space-y-4">
+                {/* Global placeholders section */}
+                {template.isPdf && getGlobalPlaceholders().length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-md font-medium text-gray-800 mb-3">Global Fields (All Pages)</h3>
+                    {getGlobalPlaceholders().map((placeholder) => (
+                      <div key={placeholder.id} className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                        <label className="block text-sm font-medium text-blue-800 mb-1">
+                          {placeholder.placeholder || `${placeholder.type} field`}
+                          {placeholder.required && <span className="text-red-500 ml-1">*</span>}
+                          <span className="ml-2 text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">
+                            GLOBAL - All Pages
+                          </span>
+                        </label>
+                        
+                        {placeholder.type === 'text' ? (
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder={placeholder.placeholder}
+                            value={userData[placeholder.id] as string || ''}
+                            onChange={(e) => handleInputChange(placeholder.id, e.target.value)}
+                          />
+                        ) : placeholder.type === 'textarea' ? (
+                          <textarea
+                            className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-vertical"
+                            placeholder={placeholder.placeholder}
+                            value={userData[placeholder.id] as string || ''}
+                            onChange={(e) => handleInputChange(placeholder.id, e.target.value)}
+                            rows={placeholder.maxLines || 5}
+                            style={{ lineHeight: placeholder.lineHeight || 1.2 }}
+                          />
+                        ) : (
+                          <div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              onChange={(e) => handleImageUpload(placeholder.id, e.target.files?.[0] || null)}
+                            />
+                            {userData[placeholder.id] && userData[placeholder.id] instanceof File && (
+                              <p className="mt-1 text-sm text-green-600">
+                                Selected: {(userData[placeholder.id] as File).name}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <h3 className="text-md font-medium text-gray-800">
-                  {template.isPdf ? `Page ${currentPage + 1} Fields` : 'Template Fields'}
+                  {template.isPdf ? `Page ${currentPage + 1} Specific Fields` : 'Template Fields'}
                 </h3>
                 
-                {getCurrentPagePlaceholders().map((placeholder) => (
+                {getPageSpecificPlaceholders().map((placeholder) => (
                   <div key={placeholder.id}>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       {placeholder.placeholder || `${placeholder.type} field`}
@@ -680,6 +805,15 @@ export default function CustomizePage() {
                         value={userData[placeholder.id] as string || ''}
                         onChange={(e) => handleInputChange(placeholder.id, e.target.value)}
                       />
+                    ) : placeholder.type === 'textarea' ? (
+                      <textarea
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-vertical"
+                        placeholder={placeholder.placeholder}
+                        value={userData[placeholder.id] as string || ''}
+                        onChange={(e) => handleInputChange(placeholder.id, e.target.value)}
+                        rows={placeholder.maxLines || 5}
+                        style={{ lineHeight: placeholder.lineHeight || 1.2 }}
+                      />
                     ) : (
                       <div>
                         <input
@@ -698,9 +832,9 @@ export default function CustomizePage() {
                   </div>
                 ))}
                 
-                {getCurrentPagePlaceholders().length === 0 && (
+                {getPageSpecificPlaceholders().length === 0 && (
                   <p className="text-gray-500 text-sm italic">
-                    No fields on this page
+                    No page-specific fields on this page
                   </p>
                 )}
               </div>
@@ -863,12 +997,19 @@ export default function CustomizePage() {
                       {getCurrentPagePlaceholders().map((placeholder) => {
                         const value = userData[placeholder.id];
                         
+                        // Use page override position if available for global placeholders
+                        let actualPlaceholder = { ...placeholder };
+                        if (placeholder.isGlobal && placeholder.pageOverrides && placeholder.pageOverrides[currentPage]) {
+                          const override = placeholder.pageOverrides[currentPage];
+                          actualPlaceholder = { ...placeholder, ...override };
+                        }
+                        
                         // Calculate display coordinates based on image scaling
                         const imgElement = canvasRef.current?.querySelector('img') as HTMLElement;
-                        let displayX = placeholder.x;
-                        let displayY = placeholder.y;
-                        let displayWidth = placeholder.width;
-                        let displayHeight = placeholder.height;
+                        let displayX = actualPlaceholder.x;
+                        let displayY = actualPlaceholder.y;
+                        let displayWidth = actualPlaceholder.width;
+                        let displayHeight = actualPlaceholder.height;
 
                         if (imgElement) {
                           const imgRect = imgElement.getBoundingClientRect();
@@ -876,10 +1017,10 @@ export default function CustomizePage() {
                           if (containerRect && template.width && template.height) {
                             const scaleX = imgRect.width / template.width;
                             const scaleY = imgRect.height / template.height;
-                            displayX = placeholder.x * scaleX;
-                            displayY = placeholder.y * scaleY;
-                            displayWidth = placeholder.width * scaleX;
-                            displayHeight = placeholder.height * scaleY;
+                            displayX = actualPlaceholder.x * scaleX;
+                            displayY = actualPlaceholder.y * scaleY;
+                            displayWidth = actualPlaceholder.width * scaleX;
+                            displayHeight = actualPlaceholder.height * scaleY;
                           }
                         }
                         
@@ -898,15 +1039,15 @@ export default function CustomizePage() {
                             }}
                             data-placeholder-border="true"
                           >
-                            {placeholder.type === 'text' ? (
+                            {actualPlaceholder.type === 'text' ? (
                               <div
                                 className="w-full h-full flex items-center justify-center text-center break-words overflow-hidden"
                                 style={{
-                                  fontSize: placeholder.fontSize || 16,
-                                  fontFamily: placeholder.fontFamily || 'Arial',
-                                  color: placeholder.color || '#000000',
+                                  fontSize: actualPlaceholder.fontSize || 16,
+                                  fontFamily: actualPlaceholder.fontFamily || 'Arial',
+                                  color: actualPlaceholder.color || '#000000',
                                   lineHeight: '1.2',
-                                  padding: '4px',
+                                  padding: '8px',
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
@@ -920,7 +1061,32 @@ export default function CustomizePage() {
                                   width: '100%',
                                   textAlign: 'center'
                                 }}>
-                                  {(typeof value === 'string' ? value : '') || placeholder.placeholder}
+                                  {(typeof value === 'string' ? value : '') || actualPlaceholder.placeholder}
+                                </span>
+                              </div>
+                            ) : actualPlaceholder.type === 'textarea' ? (
+                              <div
+                                className="w-full h-full text-center break-words overflow-hidden"
+                                style={{
+                                  fontSize: actualPlaceholder.fontSize || 16,
+                                  fontFamily: actualPlaceholder.fontFamily || 'Arial',
+                                  color: actualPlaceholder.color || '#000000',
+                                  lineHeight: actualPlaceholder.lineHeight || 1.2,
+                                  padding: '8px',
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  justifyContent: 'center',
+                                  textAlign: 'center',
+                                  wordWrap: 'break-word',
+                                  whiteSpace: 'pre-wrap'
+                                }}
+                              >
+                                <span style={{ 
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}>
+                                  {(typeof value === 'string' ? value : '') || actualPlaceholder.placeholder}
                                 </span>
                               </div>
                             ) : (
@@ -939,7 +1105,7 @@ export default function CustomizePage() {
                                   />
                                 ) : (
                                   <span className="text-gray-500 text-xs text-center p-1">
-                                    {placeholder.placeholder || 'Upload Image'}
+                                    {actualPlaceholder.placeholder || 'Upload Image'}
                                   </span>
                                 )}
                               </div>

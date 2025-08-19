@@ -31,7 +31,7 @@ export async function POST(request) {
     let backgroundImagePath = template.backgroundImage;
     const isPdf = file && file.type === 'application/pdf';
     
-    // Handle file upload
+    // Handle file upload with retry logic
     if (file && file.size > 0) {
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
@@ -44,8 +44,32 @@ export async function POST(request) {
       // Determine resource type for Cloudinary
       const resourceType = isPdf ? 'raw' : 'image';
       
-      // Upload to Cloudinary
-      const uploadResult = await uploadToCloudinary(buffer, filename, resourceType);
+      // Upload to Cloudinary with retry logic
+      let uploadResult;
+      let retries = 3;
+      
+      while (retries > 0) {
+        try {
+          uploadResult = await Promise.race([
+            uploadToCloudinary(buffer, filename, resourceType),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Upload timeout')), 60000)
+            )
+          ]);
+          break;
+        } catch (error) {
+          retries--;
+          console.error(`Upload attempt failed (${3 - retries}/3):`, error);
+          
+          if (retries === 0) {
+            throw new Error(`Failed to upload after 3 attempts: ${error.message}`);
+          }
+          
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      
       backgroundImagePath = uploadResult.secure_url;
     }
     
@@ -70,6 +94,20 @@ export async function POST(request) {
     return NextResponse.json(savedTemplate, { status: 201 });
   } catch (error) {
     console.error('Error creating template:', error);
-    return NextResponse.json({ error: 'Failed to create template' }, { status: 500 });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Failed to create template';
+    if (error.message.includes('Upload timeout')) {
+      errorMessage = 'File upload timed out. Please try with a smaller file or check your internet connection.';
+    } else if (error.message.includes('ECONNRESET')) {
+      errorMessage = 'Connection was reset during upload. Please try again.';
+    } else if (error.message.includes('Failed to upload after')) {
+      errorMessage = 'Multiple upload attempts failed. Please check your file and try again.';
+    }
+    
+    return NextResponse.json({ 
+      error: errorMessage,
+      details: error.message 
+    }, { status: 500 });
   }
 }

@@ -7,7 +7,7 @@ import { useDropzone } from 'react-dropzone';
 
 interface Placeholder {
   id: string;
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'textarea';
   x: number;
   y: number;
   width: number;
@@ -18,6 +18,10 @@ interface Placeholder {
   placeholder?: string;
   required: boolean;
   pageIndex?: number; // Add page index for PDF support
+  lineHeight?: number; // Line height for textarea
+  maxLines?: number; // Maximum lines for textarea
+  isGlobal?: boolean; // Global placeholder appears on all pages
+  pageOverrides?: { [key: number]: { x: number; y: number; width: number; height: number } }; // Position overrides for specific pages
 }
 
 interface Template {
@@ -46,7 +50,7 @@ export default function AdminPage() {
   });
   
   const [selectedPlaceholder, setSelectedPlaceholder] = useState<string | null>(null);
-  const [isAddingPlaceholder, setIsAddingPlaceholder] = useState<'text' | 'image' | null>(null);
+  const [isAddingPlaceholder, setIsAddingPlaceholder] = useState<'text' | 'image' | 'textarea' | null>(null);
   const [draggedPlaceholder, setDraggedPlaceholder] = useState<string | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
@@ -213,14 +217,18 @@ export default function AdminPage() {
       type: isAddingPlaceholder,
       x,
       y,
-      width: isAddingPlaceholder === 'text' ? 200 : 150,
-      height: isAddingPlaceholder === 'text' ? 30 : 100,
+      width: isAddingPlaceholder === 'text' ? 200 : isAddingPlaceholder === 'textarea' ? 300 : 150,
+      height: isAddingPlaceholder === 'text' ? 30 : isAddingPlaceholder === 'textarea' ? 120 : 100,
       fontSize: 16,
       fontFamily: 'Arial',
       color: '#000000',
-      placeholder: isAddingPlaceholder === 'text' ? 'Enter text here' : 'Upload image',
+      placeholder: isAddingPlaceholder === 'text' ? 'Enter text here' : isAddingPlaceholder === 'textarea' ? 'Enter paragraph text here' : 'Upload image',
       required: true,
-      pageIndex: template.isPdf ? currentPage : 0 // Set page index for PDF
+      pageIndex: template.isPdf ? currentPage : 0, // Set page index for PDF
+      lineHeight: isAddingPlaceholder === 'textarea' ? 1.2 : undefined,
+      maxLines: isAddingPlaceholder === 'textarea' ? 5 : undefined,
+      isGlobal: false,
+      pageOverrides: {}
     };
 
     setTemplate(prev => ({
@@ -246,6 +254,19 @@ export default function AdminPage() {
       placeholders: prev.placeholders.filter(p => p.id !== id)
     }));
     setSelectedPlaceholder(null);
+  };
+
+  const generatePageOverrides = (placeholder: Placeholder, totalPages: number) => {
+    const overrides: { [key: number]: { x: number; y: number; width: number; height: number } } = {};
+    for (let i = 0; i < totalPages; i++) {
+      overrides[i] = {
+        x: placeholder.x,
+        y: placeholder.y,
+        width: placeholder.width,
+        height: placeholder.height
+      };
+    }
+    return overrides;
   };
 
   const handlePlaceholderMouseDown = (e: React.MouseEvent, id: string) => {
@@ -324,9 +345,9 @@ export default function AdminPage() {
     }
   };
 
-  // Filter placeholders for current page
+  // Filter placeholders for current page (including global placeholders)
   const currentPagePlaceholders = template.placeholders.filter(p => 
-    !template.isPdf || p.pageIndex === currentPage
+    !template.isPdf || p.pageIndex === currentPage || p.isGlobal
   );
 
   const selectedPlaceholderData = template.placeholders.find(p => p.id === selectedPlaceholder);
@@ -454,6 +475,17 @@ export default function AdminPage() {
                 >
                   <ImageIcon className="w-4 h-4 mr-2" />
                   Add Image Placeholder
+                </button>
+                <button
+                  onClick={() => setIsAddingPlaceholder('textarea')}
+                  className={`w-full flex items-center justify-center px-4 py-2 rounded-md transition-colors ${
+                    isAddingPlaceholder === 'textarea'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Add Textarea Placeholder
                 </button>
               </div>
               {isAddingPlaceholder && (
@@ -604,13 +636,15 @@ export default function AdminPage() {
                         >
                         {placeholder.type === 'text' ? (
                           <Type className="w-4 h-4" />
+                        ) : placeholder.type === 'textarea' ? (
+                          <FileText className="w-4 h-4" />
                         ) : (
                           <ImageIcon className="w-4 h-4" />
                         )}
                         <span className="ml-1">{placeholder.type}</span>
                         {template.isPdf && (
                           <span className="ml-1 text-xs bg-gray-200 px-1 rounded">
-                            P{(placeholder.pageIndex || 0) + 1}
+                            {placeholder.isGlobal ? 'ALL' : `P${(placeholder.pageIndex || 0) + 1}`}
                           </span>
                         )}
                         </div>
@@ -695,7 +729,7 @@ export default function AdminPage() {
                     </div>
                   )}
                   
-                  {selectedPlaceholderData.type === 'text' && (
+                  {(selectedPlaceholderData.type === 'text' || selectedPlaceholderData.type === 'textarea') && (
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
@@ -728,6 +762,33 @@ export default function AdminPage() {
                           onChange={(e) => updatePlaceholder(selectedPlaceholderData.id, { color: e.target.value })}
                         />
                       </div>
+                      {selectedPlaceholderData.type === 'textarea' && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Line Height</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="1"
+                              max="3"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              value={selectedPlaceholderData.lineHeight || 1.2}
+                              onChange={(e) => updatePlaceholder(selectedPlaceholderData.id, { lineHeight: parseFloat(e.target.value) })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Max Lines</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="20"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              value={selectedPlaceholderData.maxLines || 5}
+                              onChange={(e) => updatePlaceholder(selectedPlaceholderData.id, { maxLines: parseInt(e.target.value) })}
+                            />
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
                   
@@ -742,7 +803,7 @@ export default function AdminPage() {
                   </div>
                   
                   <div className="col-span-2">
-                    <label className="flex items-center">
+                    <label className="flex items-center mb-2">
                       <input
                         type="checkbox"
                         className="mr-2"
@@ -751,6 +812,31 @@ export default function AdminPage() {
                       />
                       Required field
                     </label>
+                    {template.isPdf && (
+                      <div className="space-y-2">
+                        <label className="flex items-center">
+                          <input
+                            type="checkbox"
+                            className="mr-2"
+                            checked={selectedPlaceholderData.isGlobal || false}
+                            onChange={(e) => {
+                              const isGlobal = e.target.checked;
+                              updatePlaceholder(selectedPlaceholderData.id, { 
+                                isGlobal,
+                                // If making global, copy current position to all pages
+                                pageOverrides: isGlobal ? generatePageOverrides(selectedPlaceholderData, template.totalPages || 1) : {}
+                              });
+                            }}
+                          />
+                          <span className="text-sm font-medium">Global placeholder (appears on all pages with same coordinates)</span>
+                        </label>
+                        {selectedPlaceholderData.isGlobal && (
+                          <div className="bg-blue-50 p-2 rounded text-xs text-blue-700">
+                            <strong>Global Mode:</strong> This placeholder will appear at the same position (X: {selectedPlaceholderData.x}, Y: {selectedPlaceholderData.y}) on all {template.totalPages} pages.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
